@@ -98,6 +98,29 @@ def find_closest_nutrients_not_ours(nutrientGrid, origin, game_message) -> list[
     return filtered_positions
 
 
+def find_closest_spawner_not_ours(spawners, origin, game_message) -> list[Position]:
+    spawner_positions = []
+    for r in range(len(spawners)):
+        for c in range(len(spawners[0])):
+            if spawners[r][c] > 0:
+                spawner_positions.append(Position(c, r))
+
+    if not spawner_positions:
+        return []
+
+    # Sort all spawner positions by distance
+    spawner_positions.sort(key=lambda pos: _manhattan(pos, origin))
+
+    filtered_positions = []
+
+    for pos in spawner_positions:
+        owner = game_message.world.ownershipGrid[pos.y][pos.x]
+        if owner != game_message.yourTeamId:
+            filtered_positions.append(pos)
+
+    return filtered_positions
+
+
 def _best_target(game_message: TeamGameState, my_team: TeamInfo, origin) -> list[Position]:
     # nutrients_plus_proches = find_closest_nutrients(game_message.world.map.nutrientGrid, origin)
     meilleurs_nutrients = sorted(
@@ -221,7 +244,7 @@ def should_produce_spores(game_message: TeamGameState, my_team: TeamInfo) -> lis
     actions: list[SpawnerProduceSporeAction] = []
 
     remaining = my_team.nutrients
-    biomass_per_spore = 10  # minimal useful size (>=2 to act, 3 gives a movement buffer)
+    biomass_per_spore = 15  # minimal useful size (>=2 to act, 3 gives a movement buffer)
 
     # shuffle the spawners to produce spores in a random order
     # (this could help avoid ping-ponging between spawners)
@@ -236,6 +259,14 @@ def should_produce_spores(game_message: TeamGameState, my_team: TeamInfo) -> lis
     return actions
 
 
+def _enemy_targets(game_message, my_team, origin):
+    meilleurs_nutrients = sorted(
+        find_closest_spawner_not_ours(game_message.world.spawners, origin.position, game_message),
+        key=lambda pos: _path_score(game_message, my_team, origin.position, pos),
+        reverse=True)  # double sort mais marche
+    return meilleurs_nutrients
+
+
 def _gen_targets_from_spawners(game_message, my_team):
     targets = dict()
     ownership = game_message.world.ownershipGrid
@@ -243,8 +274,8 @@ def _gen_targets_from_spawners(game_message, my_team):
     our_spawners = [spawner for spawner in game_message.world.spawners if spawner.teamId == my_id]
     for spawner in our_spawners:
         # Generate targets normally, then filter out any tiles we already own,
-        # same spirit as _get_best_target_not_ours
         raw_targets = _best_target(game_message, my_team, spawner) or []
+        raw_targets.append(_enemy_targets(game_message, my_team, spawner))
         filtered = [pos for pos in raw_targets if ownership[pos.y][pos.x] != my_id]
         targets[spawner.id] = filtered
     return targets
