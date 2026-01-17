@@ -364,6 +364,7 @@ def _gen_targets_from_spawners(game_message, my_team):
     return targets
 
 class Bot:
+
     def __init__(self):
         print("Initializing your super mega duper bot")
 
@@ -371,31 +372,67 @@ class Bot:
         """
         Strategic loop implementing spawner creation, spawner production, and spore movement.
         """
-        actions: list[Action] = []
-
         my_team: TeamInfo = game_message.world.teamInfos[game_message.yourTeamId]
 
-        # Record current positions to avoid immediate backtracking next tick
-        for sp in my_team.spores:
-            spore_last_positions[sp.id] = sp.position
+        return self.strategie(game_message, my_team)
 
-        # 1) Spawner creation decisions
-        spawner_creations = should_create_spawner(game_message, my_team)
-        actions.extend(spawner_creations)
-        blocked_spores = {a.sporeId for a in spawner_creations}
+    def fillSpawnerZone(self, spawner: Spawner, game_message: TeamGameState) -> list[Position]:
+        """
+        Calculates the Manhattan distance between two positions.
+        """
+        zone_coords: list[Position] = []
+        for y in range(max(0, spawner.position.y - 5), min(game_message.world.map.height, spawner.position.y + 5)):
+            for x in range(max(0, spawner.position.x - 5), min(game_message.world.map.width, spawner.position.x + 5)):
+                zone_coords.append(Position(x=x, y=y))
+        return zone_coords
 
-        # 2) Produce spores from spawners under budget constraints
-        production = should_produce_spores(game_message, my_team)
-        actions.extend(production)
-
-        # 4) Move spores
-        spore_moves = should_move_spore(game_message, my_team, blocked_spore_ids=blocked_spores)
-        actions.extend(spore_moves)
-
+    def moveAllSporesTo(self, spores: list[Spore], targets: list[Position]) -> list[Action]:
+        """
+        Generates move actions for all spores to a target coordinate.
+        """
+        actions = []
+        for spore in spores:
+            actions.append(SporeMoveToAction(sporeId=spore.id, position=targets[0]))
+            targets.pop(0)
+            if len(targets) == 0:
+                return actions
         return actions
 
-    def get_nutriments_plus_eleves(self):
-        pass
+    def isNearBy(self, position: Position, target: Position) -> bool:
+        isNear = True
+        if abs(position.x - target.x) > 1 or abs(position.y - target.y) > 1:
+            isNear = False
+        return isNear
 
-    def get_nutriments_plus_eleves_par_distance(self, position):
-        pass
+    def numberSporeNearBy(self, spores: list[Spore], target: Position) -> int:
+        count = 0
+        for spore in spores:
+            if self.isNearBy(spore, target):
+                count += 1
+        return count
+
+    def defendCase(self, game_message: TeamGameState, defendPosition: Position, sporeId: str) -> Action:
+        return SporeMoveToAction(sporeId=sporeId, position=defendPosition)
+        # allTeam = game_message.world.teamInfos
+        # mySpore: Spore = allTeam[game_message.yourTeamId].spores[sporeId]
+        # for team in allTeam.values():
+        #     if team == allTeam[game_message.yourTeamId]:
+        #         pass
+        #     else:
+        #         for spore in team.spores:
+        #             if mySpore.biomass < spore.biomass:
+
+
+    def strategie(self, game_message: TeamGameState, myTeam: TeamInfo) -> list[Action]:
+        actions = []
+
+        if len(myTeam.spawners) == 0:
+            actions.append(SporeCreateSpawnerAction(sporeId=myTeam.spores[0].id))
+        elif myTeam.nutrients > 10:
+            actions.append(SpawnerProduceSporeAction(spawnerId=myTeam.spawners[0].id, biomass=5))
+        else:
+            for action in self.moveAllSporesTo(myTeam.spores, self.fillSpawnerZone(myTeam.spawners[0], game_message)):
+                actions.append(action)
+                print(action.position.x, action.position.y)
+
+        return actions
