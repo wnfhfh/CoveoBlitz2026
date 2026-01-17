@@ -83,24 +83,22 @@ class Bot:
         
         if len(my_team.spawners) == 0:
             actions.append(SporeCreateSpawnerAction(sporeId=my_team.spores[0].id))
-        elif len(my_team.spores) == 0:
-            actions.append(
-                SpawnerProduceSporeAction(spawnerId=my_team.spawners[0].id, biomass=20)
-            )
+        elif my_team.nutrients > 10:
+            actions.append(SpawnerProduceSporeAction(spawnerId=my_team.spawners[0].id, biomass=5))
         else:
-            print(my_team.spores)
-            spore = my_team.spores[0]
-            best_positions = self.get_nutriments_score(game_message, spore)
-            if best_positions:  # Only move if we found valid positions
-                actions.append(
-                    SporeMoveToAction(
+            best_positions = self.get_nutriments_score(game_message, my_team.spawners[0])
+            for spore in my_team.spores:
+                if best_positions:  # Only move if we found valid positions
+                    actions.append(
+                        SporeMoveToAction(
                         sporeId=spore.id,
                         position=best_positions[0],  # Take the best position
                     )
                 )
+            best_positions.pop(0) # Remove the position once assigned
         return actions
 
-    def get_nutriments_score(self, game_message: TeamGameState, spore: Spore):
+    def get_nutriments_score(self, game_message: TeamGameState, spawner: Spawner):
         """Returns a list of Position objects sorted from best to worst score."""
         nutriments = game_message.world.map.nutrientGrid
         position_scores = []
@@ -109,18 +107,20 @@ class Bot:
             for x in range(game_message.world.map.width):
                 if nutriments[y][x] > 0:
                     position = Position(x=x, y=y)
-                    score = self.score_result(game_message, position, spore, nutriments)
+                    score = self.score_result(game_message, position, spawner, nutriments)
                     # Only include positions with valid scores
-                    if score > -float('inf'):
+                    if score < 0:
                         position_scores.append((score, position))
         
         # Sort by score in descending order (best first)
-        position_scores.sort(reverse=True, key=lambda item: item[0])
         
+        position_scores.sort(reverse=True, key=lambda item: item[0])
+        print(position_scores)
+
         # Return just the positions (without scores)
         return [position for score, position in position_scores]
-
-    def score_result(self, game_message: TeamGameState, position: Position, spore: Spore, nutriments):
+    
+    def score_result(self, game_message: TeamGameState, position: Position, spawner: Spawner, nutriments):
         teamId = game_message.yourTeamId
         
         # Skip tiles we already own
@@ -128,7 +128,7 @@ class Bot:
             return -float('inf')
         
         # Calculate Manhattan distance
-        distance = abs(spore.position.x - position.x) + abs(spore.position.y - position.y)
+        distance = abs(spawner.position.x - position.x) + abs(spawner.position.y - position.y)
         
         # Score based on nutrient value minus distance cost
         score = nutriments[position.y][position.x] * 4 - distance
