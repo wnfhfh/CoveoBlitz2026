@@ -1,3 +1,5 @@
+import heapq
+import math
 import random
 from typing import Optional
 from game_message import *
@@ -127,6 +129,12 @@ def _best_target(game_message: TeamGameState, my_team: TeamInfo, origin) -> list
     # meilleurs_nutrients = sort_list_list(game_message.world.map.nutrientGrid)
     return meilleurs_nutrients
 
+def isABush(game_message: TeamGameState, position: Position) -> bool:
+    avoid = False
+    if (game_message.world.ownershipGrid[position.x][position.y] == "NEUTRAL"):
+        avoid = True
+    return avoid
+
 
 def _path_score(game_message: TeamGameState, my_team: TeamInfo, start: Position, target: Position) -> int:
     """
@@ -135,6 +143,7 @@ def _path_score(game_message: TeamGameState, my_team: TeamInfo, start: Position,
     Steps onto owned tiles are free and yield no immediate nutrients (already ours).
     Returns net benefit = sum(nutrients on newly-claimed tiles) - number of paid steps.
     """
+
     ownership = game_message.world.ownershipGrid
     # nutrients = game_message.world.map.nutrientGrid
     my_id = my_team.teamId
@@ -184,34 +193,6 @@ def sort_list_list(nutrientGrid: list[list[int]]) -> list[tuple[int, int, int]]:
     # Return as (row, col, value)
     return [(i, j, val) for val, i, j in values]
 
-
-def _best_target_fallback(best_pos, game_message, my_id, origin, ownership):
-    FALLBACK_RADIUS = 20  # Limit fallback search to avoid full map scan
-    best_dist = 10 ** 9
-    fallback_radius = min(FALLBACK_RADIUS, max(game_message.world.map.width, game_message.world.map.height))
-    for dy in range(-fallback_radius, fallback_radius + 1):
-        for dx in range(-fallback_radius, fallback_radius + 1):
-            tx = origin.position.x + dx
-            ty = origin.position.y + dy
-
-            if not _in_map(tx, ty, game_message):
-                continue
-
-            dist = abs(dx) + abs(dy)
-            if dist == 0:
-                continue
-
-            if ownership[ty][tx] != my_id:
-                if dist < best_dist:
-                    best_dist = dist
-                    best_pos = Position(tx, ty)
-    if best_pos is not None:
-        _dbg(f"_best_target: fallback found ({best_pos.x},{best_pos.y}) at distance {best_dist}")
-    else:
-        _dbg(f"_best_target: no targets found (map fully owned?)")
-    return best_pos
-
-
 def should_move_spore(game_message, my_team, blocked_spore_ids: Optional[set[str]] = None) -> list[SporeMoveToAction]:
     moves = list()
     targets_from_spawners = _gen_targets_from_spawners(game_message, my_team)
@@ -223,10 +204,11 @@ def should_move_spore(game_message, my_team, blocked_spore_ids: Optional[set[str
                 closest_spawner = min(our_spawners, key=lambda spawner: _manhattan(spore.position, spawner.position))
                 targets = targets_from_spawners.get(closest_spawner.id) or []
                 spore_destinations[spore.id] = targets[random.randint(0, len(targets)-1)]
-
-            moves.append(
-                SporeMoveToAction(sporeId=spore.id, position=spore_destinations[spore.id])
-            )
+                for position in dijkstra(game_message, spore.position, spore_destinations[spore.id]):
+                    moves.append(SporeMoveToAction(spore.id, position))
+            # moves.append(
+            #     SporeMoveToAction(sporeId=spore.id, position=spore_destinations[spore.id])
+            # )
 
     return moves
 
@@ -267,6 +249,90 @@ def _gen_targets_from_spawners(game_message, my_team):
         filtered = [pos for pos in raw_targets if ownership[pos.y][pos.x] != my_id]
         targets[spawner.id] = filtered
     return targets
+
+
+def get_unowned_biomass_grid(game_message: TeamGameState, my_team: TeamInfo) -> list[list[int]]:
+    """
+    Create a grid of biomass values for cells not owned by our team.
+    """
+    ownership = game_message.world.ownershipGrid
+    biomass = game_message.world.biomassGrid
+
+    unowned_biomass_grid = [[0 for _ in range(game_message.world.map.width)] for _ in
+                            range(game_message.world.map.height)]
+
+    for y in range(game_message.world.map.height):
+        for x in range(game_message.world.map.width):
+            if ownership[y][x] != my_team.teamId:  # Check if the cell is not owned by our team
+                unowned_biomass_grid[y][x] = biomass[y][x]
+
+    return unowned_biomass_grid
+
+def dijkstra(game_message: TeamGameState, start: Position, goal: Position) -> list[Position]:
+    width = game_message.world.map.width
+    height = game_message.world.map.height
+    ownership = game_message.world.ownershipGrid
+    my_id = game_message.yourTeamId
+
+    n = width * height
+
+    rStart: int = start.x * start.y
+    rGoal: int = goal.x * goal.y
+
+    def in_bounds(x, y):
+        return 0 <= x < width and 0 <= y < height
+
+    def neighbors(pos: Position):
+        dirs = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        for dx, dy in dirs:
+            nx, ny = pos.x + dx, pos.y + dy
+            if in_bounds(nx, ny):
+                yield Position(nx, ny)
+
+    def move_cost(pos: Position) -> int:
+        grid = get_unowned_biomass_grid(game_message, game_message.world.teamInfos[game_message.yourTeamId])
+        if (isABush(game_message, pos)):
+            return grid[pos.y][pos.x]
+        else:
+            return 0 if ownership[pos.y][pos.x] == my_id else 1
+
+    # Priority queue: (cost_so_far, Position)
+    pq = []
+    heapq.heappush(pq, (0, rStart))
+
+    dist = [math.inf] * n
+    prev = [-1] * n
+
+    while pq:
+        current_cost, current = heapq.heappop(pq)
+
+        if current.x == goal.x and current.y == goal.y:
+            break
+
+        for nxt in neighbors(current):
+            new_cost = current_cost + move_cost(nxt)
+            key = (nxt.x, nxt.y)
+
+            if key not in dist or new_cost < dist[key]:
+                dist[key] = new_cost
+                prev[key] = (current.x, current.y)
+                heapq.heappush(pq, (new_cost, nxt))
+
+    # Reconstruct path
+    path = []
+    cur_key = (goal.x, goal.y)
+
+    if cur_key not in prev and start != goal:
+        return []  # no path found
+
+    while cur_key != (start.x, start.y):
+        path.append(Position(cur_key[0], cur_key[1]))
+        cur_key = prev[cur_key]
+
+    path.append(start)
+    path.reverse()
+
+    return path
 
 
 class Bot:
