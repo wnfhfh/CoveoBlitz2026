@@ -119,10 +119,8 @@ def find_closest_nutrients_not_ours(nutrientGrid, origin, game_message) -> list[
 
 def find_closest_spawner_not_ours(spawners, origin, game_message) -> list[Position]:
     spawner_positions = []
-    for r in range(len(spawners)):
-        for c in range(len(spawners[0])):
-            if spawners[r][c] > 0:
-                spawner_positions.append(Position(c, r))
+    for spawner in spawners:
+        spawner_positions.append(spawner.position)
 
     if not spawner_positions:
         return []
@@ -294,8 +292,9 @@ def _gen_targets_from_spawners(game_message, my_team):
     for spawner in our_spawners:
         # Generate targets normally, then filter out any tiles we already own,
         raw_targets = _best_target(game_message, my_team, spawner) or []
-        raw_targets.append(_enemy_targets(game_message, my_team, spawner))
-        filtered = [pos for pos in raw_targets if ownership[pos.y][pos.x] != my_id]
+        enemy_targets = _enemy_targets(game_message, my_team, spawner) or []
+        raw_targets.extend(enemy_targets)
+        filtered = [pos for pos in raw_targets if isinstance(pos, Position) and ownership[pos.y][pos.x] != my_id]
         targets[spawner.id] = filtered
     return targets
 
@@ -361,7 +360,7 @@ class Bot:
 
     def strategie(self, game_message: TeamGameState, myTeam: TeamInfo) -> list[Action]:
         actions = []
-        spores_couverture = myTeam.spores[:len(myTeam.spores) // 2]
+        spores_couverture = myTeam.spores[:len(myTeam.spores) // 3]
         spores_ressources = [spore for spore in myTeam.spores if spore not in spores_couverture]
 
         # Strategie Antoine
