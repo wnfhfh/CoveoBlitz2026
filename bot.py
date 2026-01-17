@@ -3,8 +3,6 @@ from typing import Optional
 from game_message import *
 
 spore_destinations = dict()
-# Remember last positions to add hysteresis and avoid ping-pong
-spore_last_positions: dict[str, Position] = {}
 
 # Debug toggle for movement decisions
 DEBUG_MOVE = True
@@ -193,17 +191,18 @@ def _best_target_fallback(best_pos, game_message, my_id, origin, ownership):
     return best_pos
 
 
-def should_move_spore(game_message, my_team, blocked_spore_ids: Optional[set[str]] = None) -> list[SporeMoveToAction]:
+def should_move_spore(spores, game_message, my_team, blocked_spore_ids: Optional[set[str]] = None) -> list[SporeMoveToAction]:
     moves = list()
     targets_from_spawners = _gen_targets_from_spawners(game_message, my_team)
 
     our_spawners = [spawner for spawner in game_message.world.spawners if spawner.teamId == my_team.teamId]
     if our_spawners:
-        for spore in my_team.spores:
+        for spore in spores:
             if spore.id not in spore_destinations or spore.position == spore_destinations[spore.id]:
                 closest_spawner = min(our_spawners, key=lambda spawner: _manhattan(spore.position, spawner.position))
                 targets = targets_from_spawners.get(closest_spawner.id) or []
-                spore_destinations[spore.id] = targets[random.randint(0, len(targets))]
+                if len(targets) > 0:
+                    spore_destinations[spore.id] = targets[random.randint(0, len(targets) - 1)]
 
             moves.append(
                 SporeMoveToAction(sporeId=spore.id, position=spore_destinations[spore.id])
@@ -311,32 +310,30 @@ class Bot:
 
     def strategie(self, game_message: TeamGameState, myTeam: TeamInfo) -> list[Action]:
         actions = []
-
-        # if len(myTeam.spawners) == 0:
-        #     actions.append(SporeCreateSpawnerAction(sporeId=myTeam.spores[0].id))
-        # elif myTeam.nutrients > 10:
-        #     actions.append(SpawnerProduceSporeAction(spawnerId=myTeam.spawners[0].id, biomass=5))
-        # else:
-        #     for action in self.moveAllSporesTo(myTeam.spores, self.fillSpawnerZone(myTeam.spawners[0], game_message)):
-        #         actions.append(action)
-        #         print(action.position.x, action.position.y)
+        spores_couverture = myTeam.spores[:len(myTeam.spores) // 2]
+        spores_ressources = [spore for spore in myTeam.spores if spore not in spores_couverture]
 
         # Strategie Antoine
-        # Record current positions to avoid immediate backtracking next tick
-        for sp in myTeam.spores:
-            spore_last_positions[sp.id] = sp.position
-
         # 1) Spawner creation decisions
         spawner_creations = should_create_spawner(game_message, myTeam)
         actions.extend(spawner_creations)
         blocked_spores = {a.sporeId for a in spawner_creations}
 
         # 2) Produce spores from spawners under budget constraints
-        production = should_produce_spores(game_message, myTeam)
-        actions.extend(production)
+        # production = should_produce_spores(game_message, myTeam)
+        # actions.extend(production)
 
         # 4) Move spores
-        spore_moves = should_move_spore(game_message, myTeam, blocked_spore_ids=blocked_spores)
+        spore_moves = should_move_spore(spores_ressources, game_message, myTeam, blocked_spore_ids=blocked_spores)
         actions.extend(spore_moves)
+
+        # Felix
+        if len(myTeam.spawners) == 0:
+            actions.append(SporeCreateSpawnerAction(sporeId=myTeam.spores[0].id))
+        elif myTeam.nutrients > 10:
+            actions.append(SpawnerProduceSporeAction(spawnerId=myTeam.spawners[0].id, biomass=5))
+        else:
+            for action in self.moveAllSporesTo(spores_couverture, self.fillSpawnerZone(myTeam.spawners[0], game_message)):
+                actions.append(action)
 
         return actions
