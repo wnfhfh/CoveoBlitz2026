@@ -331,6 +331,8 @@ class Bot:
     def strategie(self, game_message: TeamGameState, myTeam: TeamInfo) -> list[Action]:
         actions = []
 
+        if (game_message.tick % 125) >= 100:
+            return self.strat_after_x_ticks(game_message, myTeam)
         # if len(myTeam.spawners) == 0:
         #     actions.append(SporeCreateSpawnerAction(sporeId=myTeam.spores[0].id))
         # elif myTeam.nutrients > 10:
@@ -344,6 +346,7 @@ class Bot:
         # Record current positions to avoid immediate backtracking next tick
         for sp in myTeam.spores:
             spore_last_positions[sp.id] = sp.position
+
 
         # 1) Spawner creation decisions
         #if(game_message.tick < 100 or game_message.tick % 50 == 0):
@@ -360,3 +363,17 @@ class Bot:
         actions.extend(spore_moves)
 
         return actions
+    
+    def strat_after_x_ticks(self, game_message: TeamGameState, myTeam: TeamInfo) -> list[Action]:
+        actions = []
+        for spore in myTeam.spores:
+            pos = spore.position
+            newPos = Position(pos.x + random.randint(-3, 3), pos.y + random.randint(-3, 3))
+            actions.append(
+                SporeMoveToAction(sporeId=spore.id, position=newPos)
+                )
+        for spawner in myTeam.spawners:
+            if myTeam.nutrients > 15:
+                actions.append(SpawnerProduceSporeAction(spawnerId=spawner.id, biomass=10))
+        return actions
+    
