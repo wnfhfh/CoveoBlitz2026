@@ -375,10 +375,6 @@ class Bot:
         #         print(action.position.x, action.position.y)
 
         # Strategie Antoine
-        # Record current positions to avoid immediate backtracking next tick
-        for sp in myTeam.spores:
-            spore_last_positions[sp.id] = sp.position
-
 
         # 1) Spawner creation decisions
         #if(game_message.tick < 100 or game_message.tick % 50 == 0):
