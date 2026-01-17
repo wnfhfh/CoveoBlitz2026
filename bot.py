@@ -2,8 +2,6 @@ import random
 from typing import Optional
 from game_message import *
 
-DISTANCE_LIGNE_DROITE = 150
-MULTIPLICATEUR_DE_VALEUR_POSITIVE = 100
 spore_destinations = dict()
 # Remember last positions to add hysteresis and avoid ping-pong
 spore_last_positions: dict[str, Position] = {}
@@ -51,12 +49,11 @@ def should_create_spawner(game_message: TeamGameState, my_team: TeamInfo) -> lis
     return [SporeCreateSpawnerAction(sporeId=candidate.id)]
 
 
-
 def _manhattan(a: Position, b: Position) -> int:
     return abs(a.x - b.x) + abs(a.y - b.y)
 
 
-def _owned_income(game_message: TeamGameState, my_team: TeamInfo) -> int: #todo a utiliser
+def _owned_income(game_message: TeamGameState, my_team: TeamInfo) -> int:  # todo a utiliser
     ownership = game_message.world.ownershipGrid
     nutrients = game_message.world.map.nutrientGrid
     my_id = my_team.teamId
@@ -78,6 +75,40 @@ def _in_map(x: int, y: int, game_message: TeamGameState) -> bool:
     return 0 <= x < w and 0 <= y < h
 
 
+def find_closest_nutrients_not_ours(nutrientGrid, origin, game_message) -> list[Position]:
+    # Find all positions with nutrients > 0
+    nutrient_positions = []
+    for r in range(len(nutrientGrid)):
+        for c in range(len(nutrientGrid[0])):
+            if nutrientGrid[r][c] > 0:
+                nutrient_positions.append(Position(c, r))
+
+    if not nutrient_positions:
+        return []
+
+    # Sort all nutrient positions by distance
+    nutrient_positions.sort(key=lambda pos: _manhattan(pos, origin))
+
+    filtered_positions = []
+
+    for pos in nutrient_positions:
+        owner = game_message.world.ownershipGrid[pos.y][pos.x]
+        if owner != game_message.yourTeamId:
+            filtered_positions.append(pos)
+
+    return filtered_positions
+
+
+def _best_target(game_message: TeamGameState, my_team: TeamInfo, origin) -> list[Position]:
+    # nutrients_plus_proches = find_closest_nutrients(game_message.world.map.nutrientGrid, origin)
+    meilleurs_nutrients = sorted(
+        find_closest_nutrients_not_ours(game_message.world.map.nutrientGrid, origin.position, game_message),
+        key=lambda pos: _path_score(game_message, my_team, origin.position, pos),
+        reverse=True)  # double sort mais marche
+    # meilleurs_nutrients = sort_list_list(game_message.world.map.nutrientGrid)
+    return meilleurs_nutrients
+
+
 def _path_score(game_message: TeamGameState, my_team: TeamInfo, start: Position, target: Position) -> int:
     """
     Simple path-based score: walk a deterministic Manhattan path (x then y).
@@ -86,7 +117,7 @@ def _path_score(game_message: TeamGameState, my_team: TeamInfo, start: Position,
     Returns net benefit = sum(nutrients on newly-claimed tiles) - number of paid steps.
     """
     ownership = game_message.world.ownershipGrid
-    nutrients = game_message.world.map.nutrientGrid
+    # nutrients = game_message.world.map.nutrientGrid
     my_id = my_team.teamId
     at_least_one_not_owned_tile = False  # s'assurer qu'on conquerit sur le path, sinon on fait juste tourner en rond dans notre zone
 
@@ -103,7 +134,7 @@ def _path_score(game_message: TeamGameState, my_team: TeamInfo, start: Position,
             break
         if ownership[y][x] != my_id:
             at_least_one_not_owned_tile = True
-            net += nutrients[y][x] * MULTIPLICATEUR_DE_VALEUR_POSITIVE  # gain
+            # net += nutrients[y][x] * MULTIPLICATEUR_DE_VALEUR_POSITIVE  # gain
             net -= 1  # biomass cost
         # else: moving on our own trail is free and yields no new nutrients
 
@@ -115,65 +146,24 @@ def _path_score(game_message: TeamGameState, my_team: TeamInfo, start: Position,
             break
         if ownership[y][x] != my_id:
             at_least_one_not_owned_tile = True
-            net += nutrients[y][x] * MULTIPLICATEUR_DE_VALEUR_POSITIVE
+            # net += nutrients[y][x] * MULTIPLICATEUR_DE_VALEUR_POSITIVE
             net -= 1
 
     return net if at_least_one_not_owned_tile else -999
 
 
-def _best_target(game_message: TeamGameState, my_team: TeamInfo, origin) -> list[Position]:
-    """Find up to top best expansion targets for a unit within search radius.
+def sort_list_list(nutrientGrid: list[list[int]]) -> list[tuple[int, int, int]]:
+    # Create list of (value, row, col) for all cells
+    values = []
+    for i, row in enumerate(nutrientGrid):
+        for j, val in enumerate(row):
+            values.append((val, i, j))
 
-    Returns a list of Positions sorted by descending score, then ascending distance.
-    If no positive targets exist, falls back to nearest non-owned tile (at most one),
-    or returns an empty list if none found.
-    """
+    # Sort by value descending
+    values.sort(reverse=True)
 
-    ownership = game_message.world.ownershipGrid
-    my_id = my_team.teamId
-
-    candidates: list[tuple[Position, int, int]] = []  # (pos, score, dist)
-
-    # Primary search: collect positive-scoring targets within radius
-    radius = DISTANCE_LIGNE_DROITE
-    for dy in range(-radius, radius + 1):
-        for dx in range(-radius, radius + 1):
-            tx = origin.position.x + dx
-            ty = origin.position.y + dy
-
-            if not _in_map(tx, ty, game_message):
-                continue
-
-            dist = abs(dx) + abs(dy)
-            if dist == 0 or dist > radius:
-                continue
-
-            # Skip tiles we already own
-            if ownership[ty][tx] == my_id:
-                continue
-
-            score = _path_score(game_message, my_team, origin.position, Position(tx, ty))
-
-            # Keep only beneficial targets
-            if score > 0:
-                candidates.append((Position(tx, ty), score, dist))
-
-    if candidates:
-        # Sort by best score desc, then closest distance asc
-        candidates.sort(key=lambda t: (-t[1], t[2]))
-        top = [pos for (pos, _score, _dist) in candidates[:20]]
-        first = top[0]
-        _dbg(
-            f"_best_target: unit {origin.id} at ({origin.position.x},{origin.position.y}) -> top {len(top)} targets, "
-            f"best=({first.x},{first.y}) score={next(s for (p,s,d) in candidates if p.x==first.x and p.y==first.y)}")
-        return top
-
-    # Fallback: find nearest non-owned tile within limited radius
-    _dbg(f"_best_target: no positive targets for unit {origin.id}, searching fallback")
-
-    best_pos = _best_target_fallback(None, game_message, my_id, origin, ownership)
-
-    return [best_pos] if best_pos is not None else []
+    # Return as (row, col, value)
+    return [(i, j, val) for val, i, j in values]
 
 
 def _best_target_fallback(best_pos, game_message, my_id, origin, ownership):
@@ -204,126 +194,22 @@ def _best_target_fallback(best_pos, game_message, my_id, origin, ownership):
 
 
 def should_move_spore(game_message, my_team, blocked_spore_ids: Optional[set[str]] = None) -> list[SporeMoveToAction]:
-    moves: list[SporeMoveToAction] = []
+    moves = list()
+    targets_from_spawners = _gen_targets_from_spawners(game_message, my_team)
 
-    # Ensure our destination cache uses spore ids
-    global spore_destinations
-    if blocked_spore_ids is None:
-        blocked_spore_ids = set()
+    our_spawners = [spawner for spawner in game_message.world.spawners if spawner.teamId == my_team.teamId]
+    if our_spawners:
+        for spore in my_team.spores:
+            if spore.id not in spore_destinations or spore.position == spore_destinations[spore.id]:
+                closest_spawner = min(our_spawners, key=lambda spawner: _manhattan(spore.position, spawner.position))
+                targets = targets_from_spawners.get(closest_spawner.id) or []
+                spore_destinations[spore.id] = targets[random.randint(0, len(targets))]
 
-    for spore in my_team.spores:
-        if not (_check_new_destination_conditions(blocked_spore_ids, moves, spore, spore_destinations)):
-            continue
-
-        # Need a new destination - pair with closest spawner
-        targets_from_spawners = _gen_targets_from_spawners(game_message, my_team)
-        
-        our_spawners = [spawner for spawner in game_message.world.spawners if spawner.teamId == my_team.teamId]
-        if our_spawners:
-            closest_spawner = min(our_spawners, key=lambda spawner: _manhattan(spore.position, spawner.position))
-            target_list = targets_from_spawners.get(closest_spawner.id) or []
-            target = target_list[0] or None
-            
-            if target is None:
-                # If no good target from the spawner, fallback to a per-spore best target
-                _dbg(f"should_move_spore: spawner-derived target is None for spore {spore.id}; falling back to per-spore best target")
-                per_spore_targets = _best_target(game_message, my_team, spore)
-                target = per_spore_targets[0] if per_spore_targets else None
-        else:
-            # No spawners yet: use per-spore best target
-            per_spore_targets = _best_target(game_message, my_team, spore)
-            target = per_spore_targets[0] if per_spore_targets else None
-
-        if target is not None and not (target.x == spore.position.x and target.y == spore.position.y):
-            spore_destinations[spore.id] = target
-            moves.append(SporeMoveToAction(sporeId=spore.id, position=target))
-            _dbg(
-                f"should_move_spore: assigning new target for spore {spore.id} at ({spore.position.x},{spore.position.y}) -> ({target.x},{target.y})")
-        else:
-            reason = "target is None" if target is None else "target equals current position"
-            _dbg(
-                # f"should_move_spore: FALLBACK random move for spore {spore.id} at ({spore.position.x},{spore.position.y}) bm={spore.biomass} because {reason}. Nearby positive targets: {near_str}")
-                "FALLBACK panique panique")
-            # As a last resort, try to nudge in a random cardinal direction within bounds
-            dirs = [Position(1, 0), Position(-1, 0), Position(0, 1), Position(0, -1)]
-            random.shuffle(dirs)
-            moved = False
-            for d in dirs:
-                nx = spore.position.x + d.x
-                ny = spore.position.y + d.y
-                if _in_map(nx, ny, game_message):
-                    pos = Position(nx, ny)
-                    spore_destinations[spore.id] = pos
-                    moves.append(SporeMoveToAction(sporeId=spore.id, position=pos))
-                    _dbg(f"should_move_spore: random nudge for spore {spore.id} -> ({pos.x},{pos.y})")
-                    moved = True
-                    break
-            if not moved:
-                _dbg(
-                    f"should_move_spore: random fallback could not find in-bounds direction for spore {spore.id}; clearing destination")
-                spore_destinations.pop(spore.id, None)
+            moves.append(
+                SporeMoveToAction(sporeId=spore.id, position=spore_destinations[spore.id])
+            )
 
     return moves
-
-
-def _check_new_destination_conditions(blocked_spore_ids, moves, spore, spore_destinations):
-    """
-    Check si on doit donner une nouvelle destination au spore ce tour ci.
-    conditions: biomasse > 2, cree pas de spawner ce tour ci, a deja une dest
-    :return: true si doit avoir une nouvelle dest
-    """
-    if spore.id in blocked_spore_ids:
-        # This spore will create a spawner this tick; skip issuing a move
-        _dbg(
-            f"_check_new_destination_conditions: spore {spore.id} at ({spore.position.x},{spore.position.y}) will create spawner; skipping move")
-        spore_destinations.pop(spore.id, None)
-        return False
-
-    # Only spores with at least 2 biomass can act
-    if spore.biomass < 2:
-        # Clear any destination if it was set (spore may have split/changed)
-        _dbg(
-            f"_check_new_destination_conditions: spore {spore.id} at ({spore.position.x},{spore.position.y}) has biomass {spore.biomass} < 2; cannot act")
-        spore_destinations.pop(spore.id, None)
-        return False
-
-    # Continue towards existing destination if not yet reached
-    dest: Optional[Position] = spore_destinations.get(spore.id)
-    if dest is not None and not (dest.x == spore.position.x and dest.y == spore.position.y):
-        _dbg(
-            f"_check_new_destination_conditions: spore {spore.id} continues toward existing destination ({dest.x},{dest.y}) from ({spore.position.x},{spore.position.y})")
-        moves.append(SporeMoveToAction(sporeId=spore.id, position=dest))
-        return False
-    return True
-
-
-# def _positive_targets_near(game_message: TeamGameState, my_team: TeamInfo, origin: Position, radius: int = 8,
-#                            limit: int = 6) -> list[tuple[Position, int, int]]:
-#     """Return up to `limit` targets around origin with positive path score.
-#     Returns tuples (pos, score, dist), sorted by score desc then dist asc.
-#     """
-#     ownership = game_message.world.ownershipGrid
-#     my_id = my_team.teamId
-#
-#     candidates: list[tuple[Position, int, int]] = []
-#     for dy in range(-radius, radius + 1):
-#         for dx in range(-radius, radius + 1):
-#             x = origin.x + dx
-#             y = origin.y + dy
-#             if not (0 <= x < game_message.world.map.width and 0 <= y < game_message.world.map.height):
-#                 continue
-#             if ownership[y][x] == my_id:
-#                 continue
-#             dist = abs(dx) + abs(dy)
-#             if dist == 0 or dist > radius:
-#                 continue
-#             score = _path_score(game_message, my_team, origin, Position(x, y))
-#             if score > 0:
-#                 candidates.append((Position(x, y), score, dist))
-#
-#     # sort par meilleur score, puis si meme score, par plus petite distance
-#     candidates.sort(key=lambda t: (-t[1], t[2]))
-#     return candidates[:limit]
 
 
 def should_produce_spores(game_message: TeamGameState, my_team: TeamInfo) -> list[SpawnerProduceSporeAction]:
@@ -362,6 +248,7 @@ def _gen_targets_from_spawners(game_message, my_team):
         filtered = [pos for pos in raw_targets if ownership[pos.y][pos.x] != my_id]
         targets[spawner.id] = filtered
     return targets
+
 
 class Bot:
 
@@ -422,17 +309,34 @@ class Bot:
         #         for spore in team.spores:
         #             if mySpore.biomass < spore.biomass:
 
-
     def strategie(self, game_message: TeamGameState, myTeam: TeamInfo) -> list[Action]:
         actions = []
 
-        if len(myTeam.spawners) == 0:
-            actions.append(SporeCreateSpawnerAction(sporeId=myTeam.spores[0].id))
-        elif myTeam.nutrients > 10:
-            actions.append(SpawnerProduceSporeAction(spawnerId=myTeam.spawners[0].id, biomass=5))
-        else:
-            for action in self.moveAllSporesTo(myTeam.spores, self.fillSpawnerZone(myTeam.spawners[0], game_message)):
-                actions.append(action)
-                print(action.position.x, action.position.y)
+        # if len(myTeam.spawners) == 0:
+        #     actions.append(SporeCreateSpawnerAction(sporeId=myTeam.spores[0].id))
+        # elif myTeam.nutrients > 10:
+        #     actions.append(SpawnerProduceSporeAction(spawnerId=myTeam.spawners[0].id, biomass=5))
+        # else:
+        #     for action in self.moveAllSporesTo(myTeam.spores, self.fillSpawnerZone(myTeam.spawners[0], game_message)):
+        #         actions.append(action)
+        #         print(action.position.x, action.position.y)
+
+        # Strategie Antoine
+        # Record current positions to avoid immediate backtracking next tick
+        for sp in myTeam.spores:
+            spore_last_positions[sp.id] = sp.position
+
+        # 1) Spawner creation decisions
+        spawner_creations = should_create_spawner(game_message, myTeam)
+        actions.extend(spawner_creations)
+        blocked_spores = {a.sporeId for a in spawner_creations}
+
+        # 2) Produce spores from spawners under budget constraints
+        production = should_produce_spores(game_message, myTeam)
+        actions.extend(production)
+
+        # 4) Move spores
+        spore_moves = should_move_spore(game_message, myTeam, blocked_spore_ids=blocked_spores)
+        actions.extend(spore_moves)
 
         return actions
