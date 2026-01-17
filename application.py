@@ -53,7 +53,7 @@ async def game_loop(websocket: ClientConnection, bot: Bot):
 
         # Just so your bot doesn't completely crash. ;)
         try:
-            actions = bot.get_next_move(game_message)
+            actions = bot.action(game_message)
         except Exception:
             print("Exception while getting next moves:")
             print(traceback.format_exc())
