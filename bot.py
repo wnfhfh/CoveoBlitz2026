@@ -11,24 +11,9 @@ class Bot:
         """
         Here is where the magic happens, for now the moves are not very good. I bet you can do better ;)
         """
-        actions = []
-
         my_team: TeamInfo = game_message.world.teamInfos[game_message.yourTeamId]
 
-        print(f"Your team has {len(my_team.spores)} spores and {len(my_team.spawners)} spawners.")
-
-        if len(my_team.spawners) == 0:
-            actions.append(SporeCreateSpawnerAction(sporeId=my_team.spores[0].id))
-        elif my_team.nutrients > 10:
-            actions.append(SpawnerProduceSporeAction(spawnerId=my_team.spawners[0].id, biomass=5))
-        else:
-            for action in self.moveAllSporesTo(my_team.spores, self.fillSpawnerZone(my_team.spawners[0], game_message)):
-                actions.append(action)
-                print(action.position.x, action.position.y)
-
-        return actions
-        # You can clearly do better than the random actions above. Have fun!!
-        return actions
+        return self.strategie(game_message, my_team)
 
     def fillSpawnerZone(self, spawner: Spawner, game_message: TeamGameState) -> list[Position]:
         """
@@ -50,4 +35,43 @@ class Bot:
             targets.pop(0)
             if len(targets) == 0:
                 return actions
+        return actions
+
+    def isNearBy(self, position: Position, target: Position) -> bool:
+        isNear = True
+        if abs(position.x - target.x) > 1 or abs(position.y - target.y) > 1:
+            isNear = False
+        return isNear
+
+    def numberSporeNearBy(self, spores: list[Spore], target: Position) -> int:
+        count = 0
+        for spore in spores:
+            if self.isNearBy(spore, target):
+                count += 1
+        return count
+
+    def defendCase(self, game_message: TeamGameState, defendPosition: Position, sporeId: str) -> Action:
+        return SporeMoveToAction(sporeId=sporeId, position=defendPosition)
+        # allTeam = game_message.world.teamInfos
+        # mySpore: Spore = allTeam[game_message.yourTeamId].spores[sporeId]
+        # for team in allTeam.values():
+        #     if team == allTeam[game_message.yourTeamId]:
+        #         pass
+        #     else:
+        #         for spore in team.spores:
+        #             if mySpore.biomass < spore.biomass:
+
+
+    def strategie(self, game_message: TeamGameState, myTeam: TeamInfo) -> list[Action]:
+        actions = []
+
+        if len(myTeam.spawners) == 0:
+            actions.append(SporeCreateSpawnerAction(sporeId=myTeam.spores[0].id))
+        elif myTeam.nutrients > 10:
+            actions.append(SpawnerProduceSporeAction(spawnerId=myTeam.spawners[0].id, biomass=5))
+        else:
+            for action in self.moveAllSporesTo(myTeam.spores, self.fillSpawnerZone(myTeam.spawners[0], game_message)):
+                actions.append(action)
+                print(action.position.x, action.position.y)
+
         return actions
