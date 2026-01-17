@@ -252,30 +252,6 @@ def should_move_spore(spores, game_message, my_team, blocked_spore_ids: Optional
     return moves
 
 
-def should_produce_spores(game_message: TeamGameState, my_team: TeamInfo) -> list[SpawnerProduceSporeAction]:
-    """Very simple production logic: produce one small spore (biomass=3) from each spawner while we have nutrients.
-
-    This ignores threats, targets, and buffering. It only respects the one-action-per-spawner rule
-    and the global nutrient constraint.
-    """
-    actions: list[SpawnerProduceSporeAction] = []
-
-    remaining = my_team.nutrients
-    biomass_per_spore = 15  # minimal useful size (>=2 to act, 3 gives a movement buffer)
-
-    # shuffle the spawners to produce spores in a random order
-    # (this could help avoid ping-ponging between spawners)
-    spawners = list(my_team.spawners)
-    random.shuffle(spawners)
-    for spawner in spawners:
-        if remaining / 2 < biomass_per_spore:
-            break
-        actions.append(SpawnerProduceSporeAction(spawnerId=spawner.id, biomass=biomass_per_spore))
-        remaining -= biomass_per_spore
-
-    return actions
-
-
 def _enemy_targets(game_message, my_team, origin):
     meilleurs_nutrients = sorted(
         find_closest_spawner_not_ours(game_message.world.spawners, origin.position, game_message),
@@ -393,11 +369,15 @@ class Bot:
         # Felix
         if len(myTeam.spawners) == 0:
             actions.append(SporeCreateSpawnerAction(sporeId=myTeam.spores[0].id))
-        elif myTeam.nutrients > 10:
-            actions.append(SpawnerProduceSporeAction(spawnerId=myTeam.spawners[0].id, biomass=5))
         else:
             for action in self.moveAllSporesTo(spores_couverture, self.fillSpawnerZone(myTeam.spawners[0], game_message)):
                 actions.append(action)
+
+        nutrients_courant = myTeam.nutrients
+        for spawner in myTeam.spawners:
+            if nutrients_courant > 15:
+                actions.append(SpawnerProduceSporeAction(spawnerId=spawner.id, biomass=10))
+                nutrients_courant = nutrients_courant - 10
 
         return actions
     
@@ -409,9 +389,11 @@ class Bot:
             actions.append(
                 SporeMoveToAction(sporeId=spore.id, position=newPos)
                 )
+        nutrients_courant = myTeam.nutrients
         for spawner in myTeam.spawners:
-            if myTeam.nutrients > 15:
+            if nutrients_courant > 15:
                 actions.append(SpawnerProduceSporeAction(spawnerId=spawner.id, biomass=10))
+                nutrients_courant = nutrients_courant - 10
         return actions
     
     
