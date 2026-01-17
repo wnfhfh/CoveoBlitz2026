@@ -27,23 +27,42 @@ def should_create_spawner(game_message: TeamGameState, my_team: TeamInfo) -> lis
     - Otherwise, do nothing.
     """
     # If we already have a spawner, do nothing
-    if len(my_team.spawners) > 0:
+    if len(my_team.spawners) > 8:
         return []
 
     cost = my_team.nextSpawnerCost
+    
+    # Define the minimum distance (radius) required between spawners
+    MIN_DISTANCE = 5
 
-    # Choose the fattest spore that can afford the spawner cost
-    candidate: Optional[Spore] = None
+    # 1. Filter: Find spores that have enough biomass AND are far enough from existing spawners
+    candidates = []
     for sp in my_team.spores:
-        if sp.biomass >= cost and (candidate is None or sp.biomass > candidate.biomass):
-            candidate = sp
+        if sp.biomass < cost:
+            continue
 
-    if candidate is None:
-        _dbg(f"should_create_spawner: no spore can afford cost {cost}; skipping creation")
+        too_close = False
+        for spawner in my_team.spawners:
+            # Calculate squared Euclidean distance to avoid slow square roots
+            dist_sq = (sp.position.x - spawner.position.x)**2 + (sp.position.y - spawner.position.y)**2
+            
+            if dist_sq < (MIN_DISTANCE ** 2):
+                too_close = True
+                break
+        
+        # Only consider this spore if it is far enough from ALL spawners
+        if not too_close:
+            candidates.append(sp)
+
+    if not candidates:
+        _dbg(f"should_create_spawner: no spore meets cost {cost} and distance > {MIN_DISTANCE}")
         return []
 
+    # 2. Selection: Choose the fattest spore from the valid candidates
+    candidate = max(candidates, key=lambda s: s.biomass)
+
     _dbg(
-        f"should_create_spawner: creating FIRST spawner using spore {candidate.id} at ({candidate.position.x},{candidate.position.y}) with biomass {candidate.biomass}, cost={cost}"
+        f"should_create_spawner: creating spawner using spore {candidate.id} at ({candidate.position.x},{candidate.position.y}) with biomass {candidate.biomass}, cost={cost}"
     )
     return [SporeCreateSpawnerAction(sporeId=candidate.id)]
 
@@ -347,6 +366,7 @@ class Bot:
 
         # Strategie Antoine
         # 1) Spawner creation decisions
+        #if(game_message.tick < 100 or game_message.tick % 50 == 0):
         spawner_creations = should_create_spawner(game_message, myTeam)
         actions.extend(spawner_creations)
         blocked_spores = {a.sporeId for a in spawner_creations}
