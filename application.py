@@ -42,7 +42,6 @@ async def game_loop(websocket: ClientConnection, bot: Bot):
             break
 
         game_message: TeamGameState = msgspec.json.decode(message, type=TeamGameState)
-
         if game_message.lastTickErrors:
             print(
                 f"Errors during last tick : {game_message.lastTickErrors}", file=stderr
